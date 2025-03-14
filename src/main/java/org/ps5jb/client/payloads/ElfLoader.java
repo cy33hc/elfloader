@@ -3,16 +3,13 @@ package org.ps5jb.client.payloads;
 import org.ps5jb.client.payloads.constants.ELF;
 import org.ps5jb.client.payloads.constants.MEM;
 import org.ps5jb.client.payloads.lib.LibKernelExtended;
-import org.ps5jb.client.payloads.lib.LibcInternal;
 import org.ps5jb.client.payloads.parser.ElfParser;
 import org.ps5jb.client.payloads.parser.ElfProgramHeader;
 import org.ps5jb.client.payloads.parser.ElfRelocation;
 import org.ps5jb.client.payloads.parser.ElfSectionHeader;
 import org.ps5jb.client.utils.init.KernelReadWriteUnavailableException;
 import org.ps5jb.client.utils.init.SdkInit;
-import org.ps5jb.client.utils.memory.MemoryDumper;
 import org.ps5jb.client.utils.process.ProcessUtils;
-import org.ps5jb.client.utils.stdio.StdioReaderThread;
 import org.ps5jb.loader.KernelAccessor;
 import org.ps5jb.loader.KernelReadWrite;
 import org.ps5jb.loader.Status;
@@ -33,8 +30,7 @@ public class ElfLoader implements Runnable {
     private ProcessUtils procUtils;
     private SdkInit sdk;
 
-    private static final boolean VERBOSE = false;
-    String elf_name = "elfldr.elf";
+    String elfName = "elfldr.elf";
 
     private boolean init() {
         try {
@@ -59,32 +55,32 @@ public class ElfLoader implements Runnable {
             return;
         }
 
-        byte[] elf_bytes;
+        byte[] elfBytes;
         try {
             // Read the ELF file from Jar
-            InputStream inputStream = this.getClass().getResourceAsStream("/" + elf_name);
+            InputStream inputStream = this.getClass().getResourceAsStream("/" + elfName);
             if (inputStream != null) {
-                elf_bytes = new byte[inputStream.available()];
+                elfBytes = new byte[inputStream.available()];
                 DataInputStream dataInputStream = new DataInputStream(inputStream);
-                dataInputStream.readFully(elf_bytes);
+                dataInputStream.readFully(elfBytes);
 
                 for (int i = 0; i < 4; i++) {
-                    if (elf_bytes[i] != ELF.elfMagic[i]) {
-                        println("[!] " + elf_name + " not valid. Aborting.");
+                    if (elfBytes[i] != ELF.elfMagic[i]) {
+                        println("[!] " + elfName + " not a valid ELF file. Aborting.");
                         return;
                     }
                 }
             } else {
-                println("[!] " + elf_name + " not found in JAR");
+                println("[!] " + elfName + " not found in JAR");
                 return;
             }
         } catch (IOException e) {
-            Status.printStackTrace("Error while reading " + elf_name, e);
+            Status.printStackTrace("Error while reading " + elfName, e);
             libKernel.closeLibrary();
             return;
         }
 
-        // Apply process patch
+        // Apply patch to bdj process
         Process curProc = new Process(KernelPointer.valueOf(sdk.curProcAddress));
         patchProcess(curProc);
         println("[+] Patch applied to " + curProc.getName());
@@ -96,25 +92,28 @@ public class ElfLoader implements Runnable {
             println("[-] Debug settings already enabled");
         }
 
+        //
+        // ELF loading
+        //
+
         // Allocate memory for ELF
-        int elf_store_size = elf_bytes.length;
-        Pointer elf_store = Pointer.malloc(elf_store_size);
+        int elfStoreSize = elfBytes.length;
+        Pointer elfStore = Pointer.malloc(elfStoreSize);
 
         // Store ELF into memory
-        for (int i = 0; i < elf_store_size; i++) {
-            elf_store.write1(i, elf_bytes[i]);
+        for (int i = 0; i < elfStoreSize; i++) {
+            elfStore.write1(i, elfBytes[i]);
         }
 
-        String with_addr = VERBOSE ? " at 0x" + Long.toHexString(elf_store.addr()) : "";
-        println("[+] Stored " + elf_name + with_addr + " (" + elf_bytes.length + " bytes)");
-
+        println("[+] Stored " + elfName + " (" + elfBytes.length + " bytes)");
         println("Prepare ELF execution...");
 
-        println("---------------------------------------------------------------------------", true);
-        println("Memory mapping:", true);
-        println("---------------------------------------------------------------------------", true);
+        // Parse ELF file
+        ElfParser elf = new ElfParser(elfBytes);
 
-        ElfParser elf = new ElfParser(elf_bytes);
+        //
+        // Memory mapping
+        //
 
         short flags = MEM.MAP_PRIVATE | MEM.MAP_ANONYMOUS;
         byte prot = MEM.PROT_READ | MEM.PROT_WRITE;
@@ -125,37 +124,33 @@ public class ElfLoader implements Runnable {
             baseAddr = elf.getMinVaddr();
             flags |= MEM.MAP_FIXED;
         } else {
-            Status.println("  [!] ELF type not supported");
+            println("  [!] ELF type not supported");
             return;
         }
 
-        Pointer mmap_ret = libKernel.mmap(Pointer.valueOf(baseAddr), elf.getElfSize(), prot, flags, -1, 0);
+        // Map memory for ELF segments
+        Pointer mmapMemoryLocation = libKernel.mmap(Pointer.valueOf(baseAddr), elf.getElfSize(), prot, flags, -1, 0);
 
-        if (mmap_ret.addr() == -1) {
+        if (mmapMemoryLocation.addr() == -1) {
             println("  [!] Could not map anonymous memory");
             return;
         } else {
-            Status.println("  [+] Mapped memory for ELF segments");
+            println("  [+] Mapped memory for ELF segments");
         }
 
         // Copy loadable segments
-        Pointer elf_dest = mmap_ret;
+        Pointer elfDestination = mmapMemoryLocation;
         ElfProgramHeader[] pHeaders = elf.getProgramHeadersByType(ELF.PT_LOAD);
         for (ElfProgramHeader ph : pHeaders) {
-            Pointer dest = elf_dest.inc(ph.getVaddr());
-            copySegment(elf_store, dest, ph.getMemsz(), ph.getFilesz(), ph.getOffset());
+            Pointer dest = elfDestination.inc(ph.getVaddr());
+            copySegment(elfStore, dest, ph.getMemsz(), ph.getFilesz(), ph.getOffset());
 
-            Status.println("  [+] ELF segment copied into memory");
-            println("Segment copied into memory @ 0x"
-                    + Long.toHexString(dest.addr()) + " ("
-                    + ph.getMemsz() + " bytes)", true);
-
-            println("test read data @ RW dest: 0x" + Long.toHexString(dest.read8()), true);
+            println("  [+] ELF segment copied into memory");
         }
 
-        println("---------------------------------------------------------------------------", true);
-        println("Relocations:", true);
-        println("---------------------------------------------------------------------------", true);
+        //
+        // Relocations
+        //
 
         int countRel = 0;
 
@@ -164,20 +159,24 @@ public class ElfLoader implements Runnable {
         for (ElfSectionHeader sh : sHeaders) {
             for (ElfRelocation r : sh.getRelocations()) {
                 if (r.getType() == ELF.R_X86_64_RELATIVE) {
-                    Pointer reloc_addr = elf_dest.inc(r.getOffset());
-                    long reloc_val = elf_dest.addr() + r.getAddend();
-                    reloc_addr.write8(reloc_val);
+                    Pointer relocAddr = elfDestination.inc(r.getOffset());
+                    long relocVal = elfDestination.addr() + r.getAddend();
+                    relocAddr.write8(relocVal);
                     countRel++;
                 }
             }
         }
 
-        Status.println("  [+] Applied relocations: " + countRel);
+        println("  [+] Applied relocations: " + countRel);
+
+        //
+        // Memory protection
+        //
 
         // Set protection of segments
         for (ElfProgramHeader ph : pHeaders) {
             if (ph.getMemsz() > 0) {
-                Pointer segmentAddr = elf_dest.inc(ph.getVaddr());
+                Pointer segmentAddr = elfDestination.inc(ph.getVaddr());
                 long segmentSize = MEM.roundPage(ph.getMemsz());
                 if ((ph.getFlags() & ELF.PF_X) == ELF.PF_X) {
                     byte memProt = MEM.translateProtection(ph.getFlags());
@@ -189,27 +188,17 @@ public class ElfLoader implements Runnable {
             }
         }
 
-        Status.println("  [+] Set memory protection flags");
-
-        // verify protection
-        if (VERBOSE) {
-            for (ElfProgramHeader ph : pHeaders) {
-                if (ph.getMemsz() > 0) {
-                    Pointer segmentAddr = elf_dest.inc(ph.getVaddr());
-                    long segmentSize = MEM.roundPage(ph.getMemsz());
-                    libKernel.printProtection(curProc, segmentAddr);
-                }
-            }
-        }
+        println("  [+] Set memory protection flags");
 
         //
-        // ELF Arguments
+        // ELF arguments
         //
-        Pointer rwpair_mem = Pointer.malloc(8);
-        Pointer payload_out = Pointer.malloc(8);
+
+        Pointer rwSocketPair = Pointer.malloc(8);
+        Pointer payloadOut = Pointer.malloc(8);
         Pointer args = Pointer.malloc(48); // 8 * 6
 
-        // IPv6 Accessor
+        // Get IPv6 Accessor for pipe and socket
         KernelAccessorIPv6 ipv6;
         KernelAccessor ka = KernelReadWrite.getAccessor(getClass().getClassLoader());
         if (ka instanceof KernelAccessorIPv6) {
@@ -219,62 +208,40 @@ public class ElfLoader implements Runnable {
             ipv6 = (KernelAccessorIPv6) KernelReadWrite.getAccessor(getClass().getClassLoader());
         }
 
-        // Pipe stuff
-        Pointer rwpipe = Pointer.malloc(8);
-        rwpipe.write4(ipv6.getPipeReadFd());
-        rwpipe.write4(4, ipv6.getPipeWriteFd());
+        // Pipe
+        Pointer rwPipe = Pointer.malloc(8);
+        rwPipe.write4(ipv6.getPipeReadFd());
+        rwPipe.write4(4, ipv6.getPipeWriteFd());
 
         // Pass master/victim pair to payload so it can do read/write
-        rwpair_mem.write4(ipv6.getMasterSock());
-        rwpair_mem.write4(4, ipv6.getVictimSock());
+        rwSocketPair.write4(ipv6.getMasterSock());
+        rwSocketPair.write4(4, ipv6.getVictimSock());
 
+        // We need getpid, sceKernelDlsym does not work on higher FWs
         Pointer dlsym = libKernel.addrOf("getpid");
 //        Pointer dlsym = libKernel.addrOf("sceKernelDlsym");
-        long kdata_addr = sdk.kernelDataAddress;
-
-        println("---------------------------------------------------------------------------", true);
-        println("ELF arguments:", true);
-        println("---------------------------------------------------------------------------", true);
-        println("dlsym addr:       0x" + Long.toHexString(dlsym.addr()), true);
-        println("rwpipe addr:      0x" + Long.toHexString(rwpipe.addr()), true);
-        println("rwpipe[0]:        0x" + Integer.toHexString(rwpipe.read4()), true);
-        println("rwpipe[1]:        0x" + Integer.toHexString(rwpipe.read4(4)), true);
-        println("rwpair addr:      0x" + Long.toHexString(rwpair_mem.addr()), true);
-        println("rwpair[0]:        0x" + Integer.toHexString(rwpair_mem.read4()), true);
-        println("rwpair[1]:        0x" + Integer.toHexString(rwpair_mem.read4(4)), true);
-        println("ipv6 pipe addr:   0x" + Long.toHexString(ipv6.getPipeAddress().addr()), true);
-        println("kdata addr:       0x" + Long.toHexString(kdata_addr), true);
-        println("payload ret addr: 0x" + Long.toHexString(payload_out.addr()), true);
+        long kdataAddress = sdk.kernelDataAddress;
 
         args.inc(0x00).write8(dlsym.addr());                 // arg1 = dlsym_t* dlsym
-        args.inc(0x08).write8(rwpipe.addr());                // arg2 = int *rwpipe[2]
-        args.inc(0x10).write8(rwpair_mem.addr());            // arg3 = int *rwpair[2]
+        args.inc(0x08).write8(rwPipe.addr());                // arg2 = int *rwpipe[2]
+        args.inc(0x10).write8(rwSocketPair.addr());          // arg3 = int *rwpair[2]
         args.inc(0x18).write8(ipv6.getPipeAddress().addr()); // arg4 = uint64_t kpipe_addr
-        args.inc(0x20).write8(kdata_addr);                   // arg5 = uint64_t kdata_base_addr
-        args.inc(0x28).write8(payload_out.addr());           // arg6 = int *payloadout
+        args.inc(0x20).write8(kdataAddress);                 // arg5 = uint64_t kdata_base_addr
+        args.inc(0x28).write8(payloadOut.addr());            // arg6 = int *payloadout
 
-        Status.println("  [+] Prepared ELF arguments");
+        println("  [+] Prepared ELF arguments");
 
-        println("---------------------------------------------------------------------------", true);
-        println("ELF invocation:", true);
-        println("---------------------------------------------------------------------------", true);
+        //
+        // ELF execution
+        //
 
-
-        Pointer elf_entry_point = Pointer.valueOf(elf_dest.addr() + elf.getElfEntry());
-
-        println("mapping_addr:    0x" + Long.toHexString(elf_dest.addr()), true);
-        println("elf_entry:       0x" + Long.toHexString(elf.getElfEntry()), true);
-        println("elf_entry_point: 0x" + Long.toHexString(elf_entry_point.addr()), true);
-        println("args addr:       0x" + Long.toHexString(args.addr()), true);
-
+        Pointer elfEntryPoint = Pointer.valueOf(elfDestination.addr() + elf.getElfEntry());
 
         println("Execution...");
-        println("  [+] Starting " + elf_name);
+        println("  [+] Starting " + elfName);
 
-        //
-        // Java Thread
-        //
-        ElfRunner runner = new ElfRunner(elf_entry_point, args);
+        // Run in Java thread
+        ElfRunner runner = new ElfRunner(elfEntryPoint, args);
         Thread t = new Thread(runner);
         t.start();
         try {
@@ -287,16 +254,13 @@ public class ElfLoader implements Runnable {
         println("  [+] Finished");
         println("Done.");
 
-        println("payload out = 0x" + Long.toHexString(payload_out.read8()), true);
-        println("return value = " + retVal, true);
-
         // Cleanup
-        payload_out.free();
-        rwpipe.free();
-        rwpair_mem.free();
+        payloadOut.free();
+        rwPipe.free();
+        rwSocketPair.free();
         args.free();
-        elf_store.free();
-        libKernel.munmap(elf_dest, elf.getElfSize());
+        elfStore.free();
+        libKernel.munmap(elfDestination, elf.getElfSize());
     }
 
     private void patchProcess(Process process) {
@@ -312,6 +276,7 @@ public class ElfLoader implements Runnable {
         final long SYSTEM_AUTHID   = 0x4800000000010003l;
         final long COREDUMP_AUTHID = 0x4800000000000006l;
         final long DEVICE_AUTHID   = 0x4801000000000013l;
+        final long currentAuthId   = procUtils.getPrivs(process)[0];
 
         // Escalate sony privs
         procUtils.setPrivs(process, new long[]{
@@ -384,19 +349,13 @@ public class ElfLoader implements Runnable {
     }
 
     private void println(String message) {
-        println(message, false);
-    }
-
-    private void println(String message, boolean verbose) {
-        if (!verbose || VERBOSE) {
-            Status.println(message);
-        }
+        Status.println(message);
     }
 
     private void copySegment(Pointer src, Pointer dest, long memSize, long fileSize, long offset) {
         for (long i = 0; i < memSize; i += 8) {
-            long src_qword = (i >= fileSize) ? 0 : src.read8(offset + i);
-            dest.write8(i, src_qword);
+            long qword = (i >= fileSize) ? 0 : src.read8(offset + i);
+            dest.write8(i, qword);
         }
     }
 }

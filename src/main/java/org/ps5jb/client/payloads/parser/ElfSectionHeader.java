@@ -1,7 +1,6 @@
 package org.ps5jb.client.payloads.parser;
 
 import org.ps5jb.client.payloads.constants.ELF;
-import org.ps5jb.loader.Status;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;

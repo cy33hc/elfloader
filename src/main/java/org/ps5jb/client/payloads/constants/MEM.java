@@ -2,6 +2,7 @@ package org.ps5jb.client.payloads.constants;
 
 public class MEM {
 
+    /** The size of a memory page, defined as 0x4000 (16,384 bytes or 16 KB). */
     public static final short PAGE_SIZE = 0x4000;
 
     // Memory protection
@@ -49,15 +50,35 @@ public class MEM {
     /** mmap_flag: Exclude from core dump */
     public static final int MAP_NOCORE      = 0x8000;
 
-
+    /**
+     * Truncates the given address to the start of its containing memory page.
+     *
+     * @param addr The memory address to truncate.
+     * @return The starting address of the page containing {@code addr}.
+     */
     public static long truncatePage(long addr) {
         return addr & -PAGE_SIZE;
     }
 
+    /**
+     * Rounds the given address up to the start of the next memory page if it is not already page-aligned.
+     *
+     * @param addr The memory address to round up.
+     * @return The starting address of the next page if {@code addr} is not already aligned,
+     *         otherwise returns {@code addr} unchanged.
+     */
     public static long roundPage(long addr) {
         return (addr + (PAGE_SIZE - 1)) & -PAGE_SIZE;
     }
 
+    /**
+     * Translates ELF segment protection flags into memory protection flags.
+     *
+     * @param flags The ELF protection flags, typically a combination of {@code ELF.PF_X},
+     *              {@code ELF.PF_R}, and {@code ELF.PF_W}.
+     * @return A byte representing the corresponding memory protection flags, combining
+     *         {@code PROT_EXEC}, {@code PROT_READ}, and {@code PROT_WRITE} as needed.
+     */
     public static byte translateProtection(int flags) {
         byte memFlags = 0;
         if ((flags & ELF.PF_X) == ELF.PF_X) {

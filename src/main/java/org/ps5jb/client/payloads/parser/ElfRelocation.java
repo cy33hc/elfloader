@@ -34,7 +34,7 @@ public class ElfRelocation {
 
     // Static method to parse an Elf64_Rela entry from a byte array
     public static ElfRelocation fromByteBuffer(ByteBuffer buffer) {
-        buffer.order(ByteOrder.LITTLE_ENDIAN); // ELF is usually little-endian
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
 
         long offset = buffer.getLong();  // Read 8-byte r_offset
         long info = buffer.getLong();    // Read 8-byte r_info

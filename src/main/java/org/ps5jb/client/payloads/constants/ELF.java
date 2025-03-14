@@ -1,6 +1,9 @@
 package org.ps5jb.client.payloads.constants;
 
 public class ELF {
+    /** Elf header starts with 0x7F + 'E' + 'L' + 'F' */
+    public static byte[] elfMagic = {0x7F, 0x45, 0x4C, 0x46};
+
     // ELF types
     /** No file type (Unknown/Unspecified) */
     public static final short ET_NONE = 0;
@@ -12,14 +15,10 @@ public class ELF {
     public static final short ET_DYN = 3;
 
     // ELF program types
+    /** Loadable segment type */
     public static final short PT_LOAD = 1;
+    /** Segment for dynamic linking */
     public static final short PT_DYNAMIC = 2;
-
-    // ELF dynamic tags
-    public static final short DT_NULL    = 0;
-    public static final short DT_RELA    = 7;
-    public static final short DT_RELASZ  = 8;
-    public static final short DT_RELAENT = 9;
 
     // ELF section header types
     /** Section header type: Relocation with Addend */
@@ -52,10 +51,6 @@ public class ELF {
     public static final int R_X86_64_TLS_DTPOFF64 = 10;
     /** Thread-local storage thread pointer offset relocation. */
     public static final int R_X86_64_TLS_TPOFF64 = 11;
-
-
-    /** Elf header starts with 0x7F + 'E' + 'L' + 'F' */
-    public static byte[] elfMagic = {0x7F, 0x45, 0x4C, 0x46};
 
     // ELF p_flags
     /** p_flags: All access denied */

@@ -10,19 +10,14 @@ import org.ps5jb.sdk.lib.LibKernel;
 import java.util.Arrays;
 
 public class LibKernelExtended extends LibKernel {
-    private Pointer dup;
-    private Pointer dup2;
-    private Pointer pthread_join;
-    private Pointer pthread_create_name_np;
-    private Pointer sceKernelJitCreateAliasOfSharedMemory;
-    private Pointer sceKernelJitCreateSharedMemory;
-    private Pointer sceKernelDlsym;
+    /** Offset to the vm_map structure inside vmspace of a process */
     private final short OFFSET_VMROOT;
 
     public LibKernelExtended() {
         OFFSET_VMROOT = getOffsetVmRoot();
     }
 
+    // Offsets from PS5 payload sdk (credits @sb)
     private short getOffsetVmRoot() {
         short offset;
         switch (getSystemSoftwareVersion()) {
@@ -99,117 +94,17 @@ public class LibKernelExtended extends LibKernel {
         return offset;
     }
 
-    public int dup(int fd) {
-        if (dup == null) {
-            dup = addrOf("dup");
-        }
-        return (int) call(dup, fd);
-    }
-
-    public int dup2(int oldfd, int newfd) {
-        if (dup2 == null) {
-            dup2 = addrOf("dup2");
-        }
-        return (int) call(dup2, oldfd, newfd);
-    }
-
-    public int pthread_create_name_np(Pointer thread, Pointer function, Pointer args, String name) {
-        if (pthread_create_name_np == null) {
-            pthread_create_name_np = addrOf("pthread_create_name_np");
-        }
-        short attr = 0; // use standard values
-        Pointer buf = Pointer.fromString(name);
-        try {
-            return (int) call(pthread_create_name_np, thread.addr(), attr, function.addr(), args.addr(), buf.addr());
-        } finally {
-            buf.free();
-        }
-    }
-
-    public int pthread_join(Pointer thread, Pointer returnVal) {
-        if (pthread_join == null) {
-            pthread_join = addrOf("pthread_join");
-        }
-        return (int) call(pthread_join, thread.addr(), returnVal.addr());
-    }
-
-    public int sceKernelJitCreateAliasOfSharedMemory(int fd, int maxProt, Pointer fdOut) {
-        if (sceKernelJitCreateAliasOfSharedMemory == null) {
-            sceKernelJitCreateAliasOfSharedMemory = addrOf("sceKernelJitCreateAliasOfSharedMemory");
-        }
-        return (int) call(sceKernelJitCreateAliasOfSharedMemory, fd, maxProt, fdOut.addr());
-    }
-
-    public int sceKernelJitCreateSharedMemory(long len, int maxProt, Pointer fdOut) {
-        if (sceKernelJitCreateSharedMemory == null) {
-            sceKernelJitCreateSharedMemory = addrOf("sceKernelJitCreateSharedMemory");
-        }
-        int name = 0; // use no name
-        return (int) call(sceKernelJitCreateSharedMemory, name, len, maxProt, fdOut.addr());
-    }
-
-    public int sceKernelDlsym(String symbolName, Pointer addrOf) {
-        if (sceKernelDlsym == null) {
-            sceKernelDlsym = addrOf("sceKernelDlsym");
-        }
-        Pointer buf = Pointer.fromString(symbolName);
-        try {
-            return (int) call(sceKernelDlsym, 0x2001, buf.addr(), addrOf.addr());
-        } finally {
-            buf.free();
-        }
-    }
-
-    public void printVmSpace(Process process) {
-        KernelPointer vmRoot = process.getVmSpace().getPointer().pptr(OFFSET_VMROOT);
-        Status.println("VmSpace binary tree: " + vmRoot);
-        walkVmSpace(vmRoot);
-    }
-
-    private void walkVmSpace(KernelPointer entry) {
-        if (!KernelPointer.NULL.equals(entry)) {
-            long start = entry.read8(0x20);
-            long end = entry.read8(0x28);
-            int prot = entry.read1(0x64) & 0xFF;
-            int maxprot = entry.read1(0x65) & 0xFF;
-            Status.println("  Start: 0x" + Long.toHexString(start));
-            Status.println("  End: 0x" + Long.toHexString(end));
-            Status.println("  Prot: " + Arrays.asList(ProtectionFlag.valueOf(prot)));
-            Status.println("  Max Prot: " + Arrays.asList(ProtectionFlag.valueOf(maxprot)));
-
-            KernelPointer left = entry.pptr(0x10);
-            walkVmSpace(left);
-
-            KernelPointer right = entry.pptr(0x18);
-            walkVmSpace(right);
-        }
-    }
-
-    public void printProtection(Process proc, Pointer addr) {
-        KernelPointer vmMapEntry = proc.getVmSpace().getPointer().pptr(OFFSET_VMROOT);
-        while (!KernelPointer.NULL.equals(vmMapEntry)) {
-            long start = vmMapEntry.read8(0x20);
-            long end = vmMapEntry.read8(0x28);
-            if (addr.addr() < start) {
-                // go left in tree
-                vmMapEntry = vmMapEntry.pptr(0x10);
-            } else if (addr.addr() >= end) {
-                // go right in tree
-                vmMapEntry = vmMapEntry.pptr(0x18);
-            } else {
-                int prot = vmMapEntry.read1(0x64) & 0xFF;
-                int maxprot = vmMapEntry.read1(0x65) & 0xFF;
-                Status.println("    Start: 0x" + Long.toHexString(start));
-                Status.println("    End: 0x" + Long.toHexString(end));
-                Status.println("    Prot: " + Arrays.asList(ProtectionFlag.valueOf(prot)));
-                Status.println("    Max Prot: " + Arrays.asList(ProtectionFlag.valueOf(maxprot)));
-                Status.println("");
-                return;
-            }
-        }
-    }
-
-    public int kMprotect(Process proc, Pointer addr, byte prot) {
+    /**
+     * Modifies the memory protection attributes of a specified address in a process's virtual memory map.
+     *
+     * <p>This method traverses the process's VM map entries, searching for the region that contains
+     * the specified address. If found, it updates the protection attributes.</p>
+     *
+     * @param proc The process whose memory protections are being modified.
+     * @param addr The memory address whose protection needs to be changed.
+     * @param prot The new protection flags to apply (e.g., read, write, execute permissions).
+     */
+    public void kMprotect(Process proc, Pointer addr, byte prot) {
         KernelPointer vmMapEntry = proc.getVmSpace().getPointer().pptr(OFFSET_VMROOT);
         while (!KernelPointer.NULL.equals(vmMapEntry)) {
             long start = vmMapEntry.read8(0x20);
@@ -222,16 +117,11 @@ public class LibKernelExtended extends LibKernel {
                 vmMapEntry = vmMapEntry.pptr(0x18);
             } else {
                 // protection
-//                byte vmProt = vmMapEntry.read1(0x64);
-//                vmProt |= prot;
                 vmMapEntry.write1(0x64, prot);
                 // max protection
-//                byte maxProt = vmMapEntry.read1(0x65);
-//                maxProt |= prot;
                 vmMapEntry.write1(0x65, prot);
-                return 0;
+                return;
             }
         }
-        return 0;
     }
 }
