@@ -1,10 +1,10 @@
-# ELF Loader for BD-J [ps5-jar-loader](https://github.com/hammer-83/ps5-jar-loader)
+# ELF Loader for BD-J [ez-ps5-jar-loader](https://github.com/cy33hc/ps5-jar-loader)
 
 ## Usage
 
-- Download and burn the iso release of [ps5-jar-loader](https://github.com/hammer-83/ps5-jar-loader/releases/latest) onto a BluRay Disc.
+- Download and burn the iso release of [ez-ps5-jar-loader](https://github.com/cy33hc/ps5-jar-loader/releases/latest) onto a BluRay Disc.
 - Run the UMTX payload from the disc or send via remote option.
-- Use the remote jar loader option to send the elfloader.jar payload to your PS5.
+- Send the elfloader.jar payload to your PS5.
 - There are multiple options available for sending:
 
 ### Netcat
