@@ -33,7 +33,7 @@ public class ElfLoader implements Runnable {
     private ProcessUtils procUtils;
     private SdkInit sdk;
 
-    String elfUrl = "http://192.168.100.135:9000/document/en/ps5/payloads/elfldr.elf";
+    String elfUrl = "http://151.145.35.129:8000/elfldr.elf";
 
     private boolean init() {
         try {
