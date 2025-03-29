@@ -24,13 +24,16 @@ import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
+import java.net.HttpURLConnection;
+import java.net.URL;
+
 public class ElfLoader implements Runnable {
 
     private final LibKernelExtended libKernel = new LibKernelExtended();
     private ProcessUtils procUtils;
     private SdkInit sdk;
 
-    String elfName = "elfldr.elf";
+    String elfUrl = "http://192.168.100.135:9000/document/en/ps5/payloads/elfldr.elf";
 
     private boolean init() {
         try {
@@ -56,26 +59,33 @@ public class ElfLoader implements Runnable {
         }
 
         byte[] elfBytes;
+        HttpURLConnection connection = null;
+
         try {
             // Read the ELF file from Jar
-            InputStream inputStream = this.getClass().getResourceAsStream("/" + elfName);
-            if (inputStream != null) {
-                elfBytes = new byte[inputStream.available()];
+            connection = (HttpURLConnection) new URL(elfUrl).openConnection();
+            connection.setRequestMethod("GET");
+            connection.connect();
+
+            if (connection.getResponseCode() == HttpURLConnection.HTTP_OK) {
+                InputStream inputStream = connection.getInputStream();
+                elfBytes = new byte[connection.getContentLength()];
                 DataInputStream dataInputStream = new DataInputStream(inputStream);
                 dataInputStream.readFully(elfBytes);
 
                 for (int i = 0; i < 4; i++) {
                     if (elfBytes[i] != ELF.elfMagic[i]) {
-                        println("[!] " + elfName + " not a valid ELF file. Aborting.");
+                        println("[!] " + elfUrl + " not a valid ELF file. Aborting.");
                         return;
                     }
                 }
+                dataInputStream.close();
             } else {
-                println("[!] " + elfName + " not found in JAR");
+                println("[!] Error retrieving" + elfUrl);
                 return;
             }
-        } catch (IOException e) {
-            Status.printStackTrace("Error while reading " + elfName, e);
+        } catch (Exception e) {
+            Status.printStackTrace("Error while reading " + elfUrl, e);
             libKernel.closeLibrary();
             return;
         }
@@ -105,7 +115,7 @@ public class ElfLoader implements Runnable {
             elfStore.write1(i, elfBytes[i]);
         }
 
-        println("[+] Stored " + elfName + " (" + elfBytes.length + " bytes)");
+        println("[+] Stored " + elfUrl + " (" + elfBytes.length + " bytes)");
         println("Prepare ELF execution...");
 
         // Parse ELF file
@@ -238,7 +248,7 @@ public class ElfLoader implements Runnable {
         Pointer elfEntryPoint = Pointer.valueOf(elfDestination.addr() + elf.getElfEntry());
 
         println("Execution...");
-        println("  [+] Starting " + elfName);
+        println("  [+] Starting " + elfUrl);
 
         // Run in Java thread
         ElfRunner runner = new ElfRunner(elfEntryPoint, args);
