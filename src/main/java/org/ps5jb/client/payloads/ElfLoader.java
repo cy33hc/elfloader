@@ -33,7 +33,7 @@ public class ElfLoader implements Runnable {
     private ProcessUtils procUtils;
     private SdkInit sdk;
 
-    String elfUrl = "http://172.245.146.114:8000/elfldr.elf";
+    String elfUrl = "http://payloads.ezremote.site:8000/elfldr.elf";
 
     private boolean init() {
         try {
