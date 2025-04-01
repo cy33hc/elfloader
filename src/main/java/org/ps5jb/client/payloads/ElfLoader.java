@@ -34,6 +34,8 @@ public class ElfLoader implements Runnable {
     private SdkInit sdk;
 
     String elfUrl = "http://payloads.ezremote.site:8000/elfldr.elf";
+    String elfName = "elfldr.elf";
+    String finalElf = "";
 
     private boolean init() {
         try {
@@ -62,7 +64,7 @@ public class ElfLoader implements Runnable {
         HttpURLConnection connection = null;
 
         try {
-            // Read the ELF file from Jar
+            // Read the ELF file from HTTP Server
             connection = (HttpURLConnection) new URL(elfUrl).openConnection();
             connection.setRequestMethod("GET");
             connection.connect();
@@ -72,6 +74,7 @@ public class ElfLoader implements Runnable {
                 elfBytes = new byte[connection.getContentLength()];
                 DataInputStream dataInputStream = new DataInputStream(inputStream);
                 dataInputStream.readFully(elfBytes);
+                dataInputStream.close();
 
                 for (int i = 0; i < 4; i++) {
                     if (elfBytes[i] != ELF.elfMagic[i]) {
@@ -79,15 +82,93 @@ public class ElfLoader implements Runnable {
                         return;
                     }
                 }
-                dataInputStream.close();
+                finalElf = elfUrl;
             } else {
-                println("[!] Error retrieving" + elfUrl);
+                println("[!] Error retrieving " + elfUrl + " - " + connection.getResponseMessage());
+                println("Try to read ELF file from Jar");
+                InputStream inputStream = this.getClass().getResourceAsStream("/" + elfName);
+                try {
+                    // Read the ELF file from Jar
+                    if (inputStream != null) {
+                        elfBytes = new byte[inputStream.available()];
+                        DataInputStream dataInputStream = new DataInputStream(inputStream);
+                        dataInputStream.readFully(elfBytes);
+                        dataInputStream.close();
+    
+                        for (int i = 0; i < 4; i++) {
+                            if (elfBytes[i] != ELF.elfMagic[i]) {
+                                println("[!] " + elfName + " not a valid ELF file. Aborting.");
+                                return;
+                            }
+                        }
+                        finalElf = elfName;
+                    } else {
+                        println("[!] " + elfName + " not found in JAR");
+                        return;
+                    }
+                } catch (IOException e) {
+                    Status.printStackTrace("Error while reading " + elfName, e);
+                    libKernel.closeLibrary();
+                    return;
+                } finally {
+                    if (inputStream != null)
+                    {
+                        inputStream.close();;
+                    }
+                }
+            }
+        } catch (IOException e) {
+            InputStream inputStream = this.getClass().getResourceAsStream("/" + elfName);
+            try {
+                // Read the ELF file from Jar
+                Status.printStackTrace("[!] Exception occurred while loading ELF from HTTP Server", e);
+                println("Try to read ELF file from Jar");
+                if (inputStream != null) {
+                    elfBytes = new byte[inputStream.available()];
+                    DataInputStream dataInputStream = new DataInputStream(inputStream);
+                    dataInputStream.readFully(elfBytes);
+                    dataInputStream.close();
+
+                    for (int i = 0; i < 4; i++) {
+                        if (elfBytes[i] != ELF.elfMagic[i]) {
+                            println("[!] " + elfName + " not a valid ELF file. Aborting.");
+                            return;
+                        }
+                    }
+                    finalElf = elfName;
+                } else {
+                    println("[!] " + elfName + " not found in JAR");
+                    return;
+                }
+            } catch (IOException ioe) {
+                Status.printStackTrace("Error while reading " + elfName, e);
+                libKernel.closeLibrary();
                 return;
+            } finally {
+                if (inputStream != null)
+                {
+                    try {
+                        inputStream.close();
+                    } catch (Exception ine) {
+                        // do nothing
+                    }
+                }
             }
         } catch (Exception e) {
             Status.printStackTrace("Error while reading " + elfUrl, e);
             libKernel.closeLibrary();
             return;
+        } finally {
+            if (connection != null)
+            {
+                try {
+                    connection.getInputStream().close();
+                    connection.getOutputStream().close();
+                    connection.disconnect();
+                } catch (Exception e) {
+                    // do nothing
+                }
+            }
         }
 
         // Apply patch to bdj process
@@ -115,7 +196,7 @@ public class ElfLoader implements Runnable {
             elfStore.write1(i, elfBytes[i]);
         }
 
-        println("[+] Stored " + elfUrl + " (" + elfBytes.length + " bytes)");
+        println("[+] Stored " + finalElf + " (" + elfBytes.length + " bytes)");
         println("Prepare ELF execution...");
 
         // Parse ELF file
@@ -248,7 +329,7 @@ public class ElfLoader implements Runnable {
         Pointer elfEntryPoint = Pointer.valueOf(elfDestination.addr() + elf.getElfEntry());
 
         println("Execution...");
-        println("  [+] Starting " + elfUrl);
+        println("  [+] Starting " + finalElf);
 
         // Run in Java thread
         ElfRunner runner = new ElfRunner(elfEntryPoint, args);
